@@ -16,6 +16,8 @@
 #include <Oscil.h>
 #include <tables/sin2048_int8.h>
 
+#include "step_sample.h"  // Generated Mars audio sample
+
 // I2S configuration for custom pins
 #define I2S_BCK_PIN 26   // Bit clock
 #define I2S_LCK_PIN 27   // Word select (automatically BCK+1 on RP2040)
@@ -24,11 +26,17 @@
 // Create a sine wave oscillator using Mozzi's built-in sine table
 Oscil<SIN2048_NUM_CELLS, MOZZI_AUDIO_RATE> sineWave(SIN2048_DATA);
 
+// Simple sample player variables
+uint32_t samplePosition = 0;
+bool samplePlaying = false;
+
 // I2S output object
 I2S i2s(OUTPUT, I2S_BCK_PIN, I2S_DATA_PIN);
 
-// Frequency control variable
+// Control variables
 float frequency = 440.0;  // 440Hz (A4 note)
+enum PlayMode { SINE_WAVE, SAMPLE_PLAYBACK };
+PlayMode currentMode = SINE_WAVE;
 
 // Required audioOutput function for Mozzi 2.0 external audio mode
 void audioOutput(const AudioOutput f) {
@@ -61,21 +69,42 @@ void setup() {
   // Set the frequency of the sine wave
   sineWave.setFreq(frequency);
 
-  Serial.println("Mozzi initialized - playing 440Hz sine wave via I2S");
+  Serial.println("Pico DAC Sampler initialized - Mozzi with sample playback!");
   Serial.println("Commands:");
-  Serial.println("  1-9: Change frequency (100Hz to 900Hz)");
+  Serial.println("  s: Switch to sine wave mode");
+  Serial.println("  m: Switch to sample playback mode");
+  Serial.println("  SPACE: Trigger sample (in sample mode)");
+  Serial.println("  1-9: Change sine wave frequency (100Hz to 900Hz)");
   Serial.println("  0: Reset to 440Hz");
+  Serial.println("Starting in sine wave mode...");
 }
 
 void updateControl() {
   // This function is called at CONTROL_RATE (64Hz)
   // Handle any control changes here
 
-  // Check for serial input to change frequency
+  // Check for serial input
   if (Serial.available()) {
     char input = Serial.read();
 
     switch (input) {
+      case 's':
+      case 'S':
+        currentMode = SINE_WAVE;
+        Serial.println("Switched to sine wave mode");
+        break;
+      case 'm':
+      case 'M':
+        currentMode = SAMPLE_PLAYBACK;
+        Serial.println("Switched to sample playback mode");
+        break;
+      case ' ':  // Spacebar to trigger sample
+        if (currentMode == SAMPLE_PLAYBACK) {
+          samplePosition = 0;
+          samplePlaying = true;
+          Serial.println("Sample triggered!");
+        }
+        break;
       case '1':
         frequency = 100;
         break;
@@ -110,19 +139,37 @@ void updateControl() {
         return;  // Invalid input, don't change frequency
     }
 
-    // Update the oscillator frequency
-    sineWave.setFreq(frequency);
-
-    Serial.print("Frequency changed to: ");
-    Serial.print(frequency);
-    Serial.println(" Hz");
+    // Update the oscillator frequency if in sine wave mode
+    if (currentMode == SINE_WAVE) {
+      sineWave.setFreq(frequency);
+      Serial.print("Frequency changed to: ");
+      Serial.print(frequency);
+      Serial.println(" Hz");
+    }
   }
 }
 
 AudioOutput updateAudio() {
   // This function is called at AUDIO_RATE (16384Hz)
   // Return the next audio sample as AudioOutput
-  return MonoOutput::from8Bit(sineWave.next());
+
+  int8_t sample = 0;
+
+  if (currentMode == SINE_WAVE) {
+    // Generate sine wave
+    sample = sineWave.next();
+  } else if (currentMode == SAMPLE_PLAYBACK) {
+    // Simple sample playback
+    if (samplePlaying && samplePosition < mars_sample_length) {
+      sample = pgm_read_byte(&mars_sample_data[samplePosition]);
+      samplePosition++;
+    } else {
+      sample = 0;             // Silence when not playing
+      samplePlaying = false;  // Stop playback when finished
+    }
+  }
+
+  return MonoOutput::from8Bit(sample);
 }
 
 void loop() {

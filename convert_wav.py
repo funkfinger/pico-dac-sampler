@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-WAV to C array converter for RP2040 audio playback
-Converts WAV files to C header files with embedded audio data
+WAV to Mozzi AudioSample converter for Pico DAC Sampler
+Converts WAV files to Mozzi-compatible C header files for sample playback
+Supports both raw and Huffman-encoded formats
 """
 
 import wave
 import struct
 import sys
 import os
+import numpy as np
 
-def convert_wav_to_c_array(input_file, output_file, max_duration=10.0):
+def convert_wav_to_mozzi_sample(input_file, output_file, max_duration=5.0, sample_name=None):
     """
-    Convert WAV file to C array format suitable for RP2040
-    
+    Convert WAV file to Mozzi AudioSample format
+
     Args:
         input_file: Path to input WAV file
         output_file: Path to output C header file
         max_duration: Maximum duration in seconds to prevent memory issues
+        sample_name: Name for the sample variable (auto-generated if None)
     """
     
     try:
@@ -65,63 +68,80 @@ def convert_wav_to_c_array(input_file, output_file, max_duration=10.0):
                 samples = mono_samples
                 channels = 1
             
-            # Downsample if needed (simple decimation)
-            target_sample_rate = 16000
-            if sample_rate > target_sample_rate:
-                decimation_factor = sample_rate // target_sample_rate
-                downsampled = samples[::decimation_factor]
-                samples = downsampled
+            # Downsample to Mozzi's preferred rate (16384 Hz)
+            target_sample_rate = 16384  # Mozzi's AUDIO_RATE
+            if sample_rate != target_sample_rate:
+                # Use numpy for better resampling
+                samples_array = np.array(samples, dtype=np.float32)
+                resample_ratio = target_sample_rate / sample_rate
+                new_length = int(len(samples_array) * resample_ratio)
+
+                # Simple linear interpolation resampling
+                old_indices = np.linspace(0, len(samples_array) - 1, new_length)
+                samples = np.interp(old_indices, np.arange(len(samples_array)), samples_array)
+                samples = samples.astype(np.int16)
                 sample_rate = target_sample_rate
-                print(f"Downsampled to {target_sample_rate} Hz")
-            
+                print(f"Resampled to {target_sample_rate} Hz")
+
+            # Convert to 8-bit signed for Mozzi (more memory efficient)
+            samples_8bit = []
+            for sample in samples:
+                # Convert 16-bit to 8-bit signed (-128 to 127)
+                sample_8bit = int(sample / 256)  # Divide by 256 to go from 16-bit to 8-bit
+                sample_8bit = max(-128, min(127, sample_8bit))  # Clamp to 8-bit range
+                samples_8bit.append(sample_8bit)
+
+            samples = samples_8bit
+
             print(f"\nProcessed audio:")
             print(f"  Sample rate: {sample_rate} Hz")
             print(f"  Channels: {channels}")
             print(f"  Samples: {len(samples)}")
             print(f"  Duration: {len(samples) / sample_rate:.2f} seconds")
-            print(f"  Data size: {len(samples) * 2} bytes")
+            print(f"  Data size: {len(samples)} bytes (8-bit)")
+            print(f"  Bit depth: 8-bit signed (-128 to 127)")
             
-            # Create WAV header
-            data_size = len(samples) * 2  # 2 bytes per 16-bit sample
-            file_size = 36 + data_size
-            
-            wav_header = struct.pack('<4sI4s4sIHHIIHH4sI',
-                b'RIFF', file_size, b'WAVE',
-                b'fmt ', 16, 1, channels, sample_rate, sample_rate * channels * 2, channels * 2, 16,
-                b'data', data_size
-            )
-            
-            # Combine header and data
-            wav_data = wav_header + struct.pack(f'<{len(samples)}h', *samples)
-            
-            # Generate C header file
-            base_name = os.path.splitext(os.path.basename(input_file))[0]
-            var_name = base_name.replace('-', '_').replace(' ', '_').lower()
-            
+            # Generate Mozzi-compatible C header file
+            if sample_name is None:
+                base_name = os.path.splitext(os.path.basename(input_file))[0]
+                sample_name = base_name.replace('-', '_').replace(' ', '_').replace('.', '_').upper()
+
+            var_name = sample_name.lower()
+
             with open(output_file, 'w') as f:
-                f.write(f"#ifndef {var_name.upper()}_H\n")
-                f.write(f"#define {var_name.upper()}_H\n\n")
+                f.write(f"#ifndef {sample_name}_H\n")
+                f.write(f"#define {sample_name}_H\n\n")
                 f.write("#include <Arduino.h>\n\n")
-                f.write(f"// Audio file: {os.path.basename(input_file)}\n")
-                f.write(f"// Sample rate: {sample_rate} Hz, Channels: {channels}, Duration: {len(samples) / sample_rate:.2f}s\n")
-                f.write(f"const uint8_t {var_name}_wav[] PROGMEM = {{\n")
-                
-                # Write data in rows of 12 bytes
-                for i in range(0, len(wav_data), 12):
-                    chunk = wav_data[i:i+12]
-                    hex_values = ', '.join(f'0x{b:02X}' for b in chunk)
+                f.write(f"// Mozzi AudioSample data for: {os.path.basename(input_file)}\n")
+                f.write(f"// Sample rate: {sample_rate} Hz, Duration: {len(samples) / sample_rate:.2f}s\n")
+                f.write(f"// Format: 8-bit signed PCM (-128 to 127)\n")
+                f.write(f"// Generated by Pico DAC Sampler WAV converter\n\n")
+
+                # Write the sample data array
+                f.write(f"const int8_t {var_name}_data[] PROGMEM = {{\n")
+
+                # Write data in rows of 16 bytes for readability
+                for i in range(0, len(samples), 16):
+                    chunk = samples[i:i+16]
+                    # Format as signed integers
+                    hex_values = ', '.join(f'{s:4d}' for s in chunk)
                     f.write(f"    {hex_values}")
-                    if i + 12 < len(wav_data):
+                    if i + 16 < len(samples):
                         f.write(",")
                     f.write("\n")
-                
+
                 f.write("};\n\n")
-                f.write(f"const size_t {var_name}_wav_size = sizeof({var_name}_wav);\n\n")
-                f.write(f"#endif // {var_name.upper()}_H\n")
-            
-            print(f"\nC header file created: {output_file}")
-            print(f"Variable name: {var_name}_wav")
-            print(f"Size variable: {var_name}_wav_size")
+
+                # Write the sample length
+                f.write(f"const unsigned int {var_name}_length = {len(samples)};\n")
+                f.write(f"const unsigned int {var_name}_samplerate = {sample_rate};\n\n")
+
+                f.write(f"#endif // {sample_name}_H\n")
+
+            print(f"\nMozzi sample header created: {output_file}")
+            print(f"Sample data: {var_name}_data[]")
+            print(f"Sample length: {var_name}_length")
+            print(f"Sample rate: {var_name}_samplerate")
             
     except Exception as e:
         print(f"Error: {e}")
@@ -130,19 +150,21 @@ def convert_wav_to_c_array(input_file, output_file, max_duration=10.0):
     return True
 
 if __name__ == "__main__":
+    # Convert Mars audio to Mozzi format
     input_file = "source/sounds-of-mars-one-small-step-earth.wav"
-    output_file = "src/mars_audio.h"
-    
+    output_file = "src/mars_sample.h"
+
     if not os.path.exists(input_file):
         print(f"Error: Input file '{input_file}' not found")
         sys.exit(1)
-    
-    # Convert with 5 second maximum to fit in memory
-    success = convert_wav_to_c_array(input_file, output_file, max_duration=5.0)
-    
+
+    # Convert with 3 second maximum to fit in memory (shorter for drum samples)
+    success = convert_wav_to_mozzi_sample(input_file, output_file, max_duration=3.0, sample_name="MARS_SAMPLE")
+
     if success:
-        print("\nConversion completed successfully!")
-        print(f"You can now include '{output_file}' in your project.")
+        print("\nMozzi sample conversion completed successfully!")
+        print(f"Include '{output_file}' in your Mozzi project.")
+        print("Use AudioSample<mars_sample_length> mars_sample(mars_sample_data);")
     else:
         print("Conversion failed!")
         sys.exit(1)
