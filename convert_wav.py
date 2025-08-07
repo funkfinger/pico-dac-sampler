@@ -150,21 +150,21 @@ def convert_wav_to_mozzi_sample(input_file, output_file, max_duration=5.0, sampl
     return True
 
 if __name__ == "__main__":
-    # Convert Mars audio to Mozzi format
-    input_file = "source/sounds-of-mars-one-small-step-earth.wav"
-    output_file = "src/mars_sample.h"
+    # Convert Step audio to Mozzi format
+    input_file = "source/one-small-step.wav"
+    output_file = "src/step_sample.h"
 
     if not os.path.exists(input_file):
         print(f"Error: Input file '{input_file}' not found")
         sys.exit(1)
 
     # Convert with 3 second maximum to fit in memory (shorter for drum samples)
-    success = convert_wav_to_mozzi_sample(input_file, output_file, max_duration=3.0, sample_name="MARS_SAMPLE")
+    success = convert_wav_to_mozzi_sample(input_file, output_file, max_duration=3.0, sample_name="STEP_SAMPLE")
 
     if success:
         print("\nMozzi sample conversion completed successfully!")
         print(f"Include '{output_file}' in your Mozzi project.")
-        print("Use AudioSample<mars_sample_length> mars_sample(mars_sample_data);")
+        print("Use AudioSample<step_sample_length> step_sample(step_sample_data);")
     else:
         print("Conversion failed!")
         sys.exit(1)

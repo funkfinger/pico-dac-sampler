@@ -21,19 +21,25 @@ A RP2040-based eurorack module for sample playback and drum machine functionalit
 ### **Hardware Interface**
 
 - **RP2040 microcontroller** optimized for real-time audio
+- **0.91" OLED display** (128x32) for visual feedback and control
 - **Eurorack-compatible** trigger inputs and CV control
 - **I2S DAC output** (GPIO26=BCK, GPIO27=LCK, GPIO28=DIN)
+- **I2C interface** (GPIO4=SDA, GPIO5=SCL) for OLED display
 - **Serial interface** for development and configuration
 
 ## 🔧 Hardware Requirements
 
 - **Raspberry Pi RP2040** microcontroller (Pico or compatible)
 - **PCM5102A I2S DAC** for high-quality audio output
+- **0.91" SSD1306 OLED Display** (128x32, I2C interface)
 - **Eurorack-compatible** trigger inputs (optional)
 - **I2S Connections**:
   - GPIO26 → BCK (Bit Clock)
   - GPIO27 → LCK (Word Select) - automatically assigned
   - GPIO28 → DIN (Data Input)
+- **I2C Connections**:
+  - GPIO4 → SDA (I2C Data)
+  - GPIO5 → SCL (I2C Clock)
 - **Power**: 3.3V from eurorack power supply
 
 ## 🎚️ Current Controls (Development Mode)

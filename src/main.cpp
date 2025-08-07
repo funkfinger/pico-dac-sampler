@@ -10,18 +10,32 @@
   Next: Multi-voice sample playback for drum machine functionality
 */
 
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <Arduino.h>
 #include <I2S.h>    // For I2S output on RP2040
 #include <Mozzi.h>  // Use Mozzi.h instead of MozziGuts.h for Mozzi 2.0
 #include <Oscil.h>
+#include <Wire.h>
 #include <tables/sin2048_int8.h>
 
-#include "step_sample.h"  // Generated Mars audio sample
+#include "step_sample.h"  // Generated audio sample
 
 // I2S configuration for custom pins
 #define I2S_BCK_PIN 26   // Bit clock
 #define I2S_LCK_PIN 27   // Word select (automatically BCK+1 on RP2040)
 #define I2S_DATA_PIN 28  // Data output
+
+// OLED configuration
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT \
+  32                   // OLED display height, in pixels (0.91" is usually 32)
+#define OLED_RESET -1  // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C  // I2C address for SSD1306 (usually 0x3C)
+
+// I2C pins for OLED (using default Wire pins)
+#define SDA_PIN 4  // GPIO4 for I2C SDA
+#define SCL_PIN 5  // GPIO5 for I2C SCL
 
 // Create a sine wave oscillator using Mozzi's built-in sine table
 Oscil<SIN2048_NUM_CELLS, MOZZI_AUDIO_RATE> sineWave(SIN2048_DATA);
@@ -29,6 +43,9 @@ Oscil<SIN2048_NUM_CELLS, MOZZI_AUDIO_RATE> sineWave(SIN2048_DATA);
 // Simple sample player variables
 uint32_t samplePosition = 0;
 bool samplePlaying = false;
+
+// Create OLED display object
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // I2S output object
 I2S i2s(OUTPUT, I2S_BCK_PIN, I2S_DATA_PIN);
@@ -48,11 +65,66 @@ void audioOutput(const AudioOutput f) {
   i2s.write16(sample, sample);
 }
 
+// Display functions
+void updateDisplay() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+
+  // Title
+  display.println("Pico DAC Sampler");
+
+  // Current mode
+  display.print("Mode: ");
+  if (currentMode == SINE_WAVE) {
+    display.println("Sine Wave");
+    display.print("Freq: ");
+    display.print((int)frequency);
+    display.println(" Hz");
+  } else {
+    display.println("Sample");
+    if (samplePlaying) {
+      display.println("Playing...");
+      // Show progress bar
+      int progress = (samplePosition * 100) / step_sample_length;
+      display.print("Progress: ");
+      display.print(progress);
+      display.println("%");
+    } else {
+      display.println("Press SPACE");
+    }
+  }
+
+  display.display();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  Serial.println("Mozzi Sine Wave Generator Starting...");
+  Serial.println("Pico DAC Sampler Starting...");
+
+  // Initialize I2C for OLED
+  Wire.setSDA(SDA_PIN);
+  Wire.setSCL(SCL_PIN);
+  Wire.begin();
+
+  // Initialize OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    // Continue without display rather than stopping
+  } else {
+    Serial.println("OLED display initialized");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Pico DAC Sampler");
+    display.println("Initializing...");
+    display.display();
+    delay(1000);
+  }
 
   // Initialize I2S with 16-bit samples
   i2s.setBitsPerSample(16);
@@ -77,6 +149,9 @@ void setup() {
   Serial.println("  1-9: Change sine wave frequency (100Hz to 900Hz)");
   Serial.println("  0: Reset to 440Hz");
   Serial.println("Starting in sine wave mode...");
+
+  // Update display with initial state
+  updateDisplay();
 }
 
 void updateControl() {
@@ -92,17 +167,20 @@ void updateControl() {
       case 'S':
         currentMode = SINE_WAVE;
         Serial.println("Switched to sine wave mode");
+        updateDisplay();
         break;
       case 'm':
       case 'M':
         currentMode = SAMPLE_PLAYBACK;
         Serial.println("Switched to sample playback mode");
+        updateDisplay();
         break;
       case ' ':  // Spacebar to trigger sample
         if (currentMode == SAMPLE_PLAYBACK) {
           samplePosition = 0;
           samplePlaying = true;
           Serial.println("Sample triggered!");
+          updateDisplay();
         }
         break;
       case '1':
@@ -145,6 +223,7 @@ void updateControl() {
       Serial.print("Frequency changed to: ");
       Serial.print(frequency);
       Serial.println(" Hz");
+      updateDisplay();
     }
   }
 }
@@ -160,8 +239,8 @@ AudioOutput updateAudio() {
     sample = sineWave.next();
   } else if (currentMode == SAMPLE_PLAYBACK) {
     // Simple sample playback
-    if (samplePlaying && samplePosition < mars_sample_length) {
-      sample = pgm_read_byte(&mars_sample_data[samplePosition]);
+    if (samplePlaying && samplePosition < step_sample_length) {
+      sample = pgm_read_byte(&step_sample_data[samplePosition]);
       samplePosition++;
     } else {
       sample = 0;             // Silence when not playing
@@ -176,12 +255,26 @@ void loop() {
   // audioHook() must be called regularly for Mozzi to work
   audioHook();
 
+  // Update display periodically to show sample progress
+  static unsigned long lastDisplayUpdate = 0;
+  if (millis() - lastDisplayUpdate > 100) {  // Every 100ms
+    if (currentMode == SAMPLE_PLAYBACK && samplePlaying) {
+      updateDisplay();  // Update progress bar
+    }
+    lastDisplayUpdate = millis();
+  }
+
   // Optional: Print status occasionally
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint > 5000) {  // Every 5 seconds
-    Serial.print("Playing sine wave at ");
-    Serial.print(frequency);
-    Serial.println(" Hz");
+    Serial.print("Playing ");
+    if (currentMode == SINE_WAVE) {
+      Serial.print("sine wave at ");
+      Serial.print(frequency);
+      Serial.println(" Hz");
+    } else {
+      Serial.println("sample mode");
+    }
     lastPrint = millis();
   }
 }
