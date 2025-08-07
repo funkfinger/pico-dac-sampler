@@ -1,66 +1,69 @@
-# RP2040 Advanced Audio Player
+# Pico DAC Sampler
 
-An advanced audio player for the Raspberry Pi RP2040 microcontroller featuring real-time speed/pitch control, WAV file playback from flash memory, and high-quality linear interpolation audio processing.
+A RP2040-based eurorack module for sample playback and drum machine functionality. Features multiple voice sample playback, real-time speed/pitch control, and trigger-based sequencing using the Mozzi audio synthesis library.
 
 ## 🎵 Features
 
-### **Audio Playback**
-- **WAV file playback** from flash memory using arduino-audio-tools
-- **Real-time sine wave generation** (440Hz test tone)
-- **I2S audio output** for high-quality digital audio
-- **16kHz sample rate, 16-bit mono** audio processing
+### **Eurorack Module Capabilities**
 
-### **Advanced Speed/Pitch Control**
-- **Real-time speed control**: 0.1x to 4.0x range (10% to 400%)
-- **Independent pitch control**: 0.5x to 2.0x range (50% to 200%)
-- **Linear interpolation** for smooth, high-quality audio processing
-- **Dual control modes**: LINKED (traditional) and INDEPENDENT
-- **Fractional sample positioning** for smooth speed changes
+- **Multi-voice drum machine** with 4 sample slots (kick, snare, hihat, tom)
+- **Trigger-based sequencing** compatible with eurorack trigger signals
+- **Real-time sample playback** using Mozzi audio synthesis library
+- **I2S audio output** via PCM5102A DAC for high-quality audio
 
-### **Interactive Controls**
-- **Serial interface** for real-time control
-- **Mode switching** between sine wave and audio playback
-- **Fine control** with 0.1x increments
-- **Instant parameter changes** without audio interruption
+### **Sample Control**
+
+- **Real-time speed control** for pitch shifting and time stretching
+- **Individual sample tuning** for each voice
+- **Simultaneous playback** of multiple samples (polyphonic)
+- **Flash memory storage** for embedded drum samples
+
+### **Hardware Interface**
+
+- **RP2040 microcontroller** optimized for real-time audio
+- **Eurorack-compatible** trigger inputs and CV control
+- **I2S DAC output** (GPIO26=BCK, GPIO27=LCK, GPIO28=DIN)
+- **Serial interface** for development and configuration
 
 ## 🔧 Hardware Requirements
 
-- **Raspberry Pi RP2040** microcontroller
-- **I2S DAC/Amplifier** (e.g., MAX98357A)
-- **Connections**:
+- **Raspberry Pi RP2040** microcontroller (Pico or compatible)
+- **PCM5102A I2S DAC** for high-quality audio output
+- **Eurorack-compatible** trigger inputs (optional)
+- **I2S Connections**:
   - GPIO26 → BCK (Bit Clock)
   - GPIO27 → LCK (Word Select) - automatically assigned
   - GPIO28 → DIN (Data Input)
+- **Power**: 3.3V from eurorack power supply
 
-## 🎚️ Controls
+## 🎚️ Current Controls (Development Mode)
 
-| Key | Function |
-|-----|----------|
-| `s` | Switch to sine wave mode |
-| `m` | Switch to Mars audio mode |
-| `+` | Increase speed by 0.1x |
-| `-` | Decrease speed by 0.1x |
-| `p` | Increase pitch by 0.1x (independent mode) |
-| `o` | Decrease pitch by 0.1x (independent mode) |
-| `i` | Toggle LINKED ↔ INDEPENDENT control modes |
-| `1` | Reset speed to 1.0x |
-| `2` | Reset pitch to 1.0x |
+| Key   | Function                                    |
+| ----- | ------------------------------------------- |
+| `1-9` | Change sine wave frequency (100Hz to 900Hz) |
+| `0`   | Reset to 440Hz (A4 note)                    |
+
+_Note: Full drum machine controls will be added as development progresses_
 
 ## 🚀 Getting Started
 
 ### **Prerequisites**
+
 - [PlatformIO](https://platformio.org/) installed
 - RP2040 development board
 - I2S DAC/amplifier module
 
 ### **Installation**
+
 1. Clone this repository:
+
    ```bash
-   git clone https://github.com/funkfinger/rp2040-advanced-audio-player.git
-   cd rp2040-advanced-audio-player
+   git clone https://github.com/funkfinger/pico-dac-sampler.git
+   cd pico-dac-sampler
    ```
 
 2. Build and upload:
+
    ```bash
    pio run --target upload
    ```
@@ -71,6 +74,7 @@ An advanced audio player for the Raspberry Pi RP2040 microcontroller featuring r
    ```
 
 ### **Adding Your Own Audio**
+
 1. Place your WAV file in the `source/` directory
 2. Run the conversion script:
    ```bash
@@ -90,10 +94,12 @@ An advanced audio player for the Raspberry Pi RP2040 microcontroller featuring r
 ## 🎯 Creative Applications
 
 ### **LINKED Mode** (Speed + Pitch together)
+
 - **0.5x**: Classic slow-motion with lower pitch
 - **2.0x**: Fast playback with higher pitch (chipmunk effect)
 
 ### **INDEPENDENT Mode** (Separate controls)
+
 - **Speed 0.5x, Pitch 1.0x**: Slow motion with normal pitch
 - **Speed 1.0x, Pitch 1.5x**: Normal speed with higher pitch
 - **Speed 2.0x, Pitch 0.8x**: Fast playback with lower pitch
@@ -102,24 +108,34 @@ An advanced audio player for the Raspberry Pi RP2040 microcontroller featuring r
 
 ```
 ├── src/
-│   ├── main.cpp              # Main audio player code
-│   ├── mars_audio.h          # Embedded Mars audio data
-│   └── audio_data.h          # Test audio data
-├── source/                   # Original audio files
-├── convert_wav.py           # WAV to C array converter
-├── advanced_speed_control.md # Detailed documentation
-└── platformio.ini           # Project configuration
+│   ├── main.cpp              # Mozzi-based sine wave generator
+│   ├── mozzi_config.h        # Mozzi configuration for I2S
+│   ├── mars_audio.h          # Legacy audio data (to be converted)
+│   └── audio_data.h          # Legacy test data
+├── source/                   # Original drum samples (to be added)
+├── AI/
+│   └── user_stories.md       # Project roadmap and user stories
+├── convert_wav.py           # WAV to Mozzi format converter (to be updated)
+└── platformio.ini           # Project configuration with Mozzi
 ```
 
 ## 🛠️ Development
 
-The project uses the [arduino-audio-tools](https://github.com/pschatzmann/arduino-audio-tools) library for robust audio processing and the [arduino-pico](https://github.com/earlephilhower/arduino-pico) core for RP2040 support.
+The project uses the [Mozzi](https://github.com/sensorium/Mozzi) audio synthesis library for efficient real-time audio generation and the [arduino-pico](https://github.com/earlephilhower/arduino-pico) core for RP2040 support.
 
-### **Key Functions**
-- `generateSineWave()`: Reusable sine wave generator
-- `getMarsAudioSamplesInterpolated()`: High-quality speed control with interpolation
-- `pitchShiftBuffer()`: Independent pitch shifting
-- `adjustSpeed()` / `adjustPitch()`: Real-time parameter control
+### **Current Implementation**
+
+- `updateAudio()`: Mozzi audio generation callback (16kHz)
+- `updateControl()`: Mozzi control callback (64Hz) for parameter changes
+- `audioOutput()`: Custom I2S output function for external DAC
+- Sine wave oscillator using Mozzi's optimized wavetables
+
+### **Planned Features**
+
+- Multi-voice sample playback engine
+- Trigger input handling for eurorack compatibility
+- Real-time speed/pitch control per voice
+- CV input processing for parameter modulation
 
 ## 📄 License
 
@@ -131,4 +147,4 @@ Contributions are welcome! Please feel free to submit issues, feature requests, 
 
 ---
 
-**Built with ❤️ for the RP2040 community**
+**Built with ❤️ for the eurorack and RP2040 communities**
