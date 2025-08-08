@@ -15,7 +15,7 @@ This is a RP2040-based eurorack module that can play samples at different rates.
 ## Module Functionality
 
 - [x] As a user I would like to trigger each of the 4 samples with a button.
-- [ ] As a user I would like to be able to trigger multiple samples at once.
+- [x] As a user I would like to be able to trigger multiple samples at once.
 - [ ] As a user I would like to be able to choose the sample to play.
 - [ ] As a user I would like to be able to trigger the sample to play.
 - [ ] As a user I would like to be able to adjust the playback speed of the sample.
