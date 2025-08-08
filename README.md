@@ -13,9 +13,10 @@ A RP2040-based eurorack module for sample playback and drum machine functionalit
 
 ### **Sample Control**
 
-- **Real-time speed control** for pitch shifting and time stretching
-- **Individual sample tuning** for each voice
-- **Simultaneous playback** of multiple samples (polyphonic)
+- **4-button trigger system** with hardware debouncing (GPIO6-9)
+- **Real-time sample triggering** for live performance
+- **Individual sample assignment** per button (Kick, Snare, Hihat, Tom)
+- **Eurorack-compatible** trigger inputs with protection circuitry
 - **Flash memory storage** for embedded drum samples
 
 ### **Hardware Interface**
@@ -32,7 +33,8 @@ A RP2040-based eurorack module for sample playback and drum machine functionalit
 - **Raspberry Pi RP2040** microcontroller (Pico or compatible)
 - **PCM5102A I2S DAC** for high-quality audio output
 - **0.91" SSD1306 OLED Display** (128x32, I2C interface)
-- **Eurorack-compatible** trigger inputs (optional)
+- **4x Momentary Push Buttons** for sample triggering
+- **Protection circuitry** for eurorack trigger compatibility (optional)
 - **I2S Connections**:
   - GPIO26 → BCK (Bit Clock)
   - GPIO27 → LCK (Word Select) - automatically assigned
@@ -40,16 +42,31 @@ A RP2040-based eurorack module for sample playback and drum machine functionalit
 - **I2C Connections**:
   - GPIO4 → SDA (I2C Data)
   - GPIO5 → SCL (I2C Clock)
+- **Button Connections**:
+  - GPIO6 → Button 1 (Kick) → GND
+  - GPIO7 → Button 2 (Snare) → GND
+  - GPIO8 → Button 3 (Hihat) → GND
+  - GPIO9 → Button 4 (Tom) → GND
 - **Power**: 3.3V from eurorack power supply
 
-## 🎚️ Current Controls (Development Mode)
+## 🎚️ Controls
 
-| Key   | Function                                    |
-| ----- | ------------------------------------------- |
-| `1-9` | Change sine wave frequency (100Hz to 900Hz) |
-| `0`   | Reset to 440Hz (A4 note)                    |
+### **Serial Commands**
 
-_Note: Full drum machine controls will be added as development progresses_
+| Key     | Function                  |
+| ------- | ------------------------- |
+| `SPACE` | Trigger sample via serial |
+
+### **Hardware Buttons**
+
+| Button   | GPIO  | Function         | Sample     |
+| -------- | ----- | ---------------- | ---------- |
+| Button 1 | GPIO6 | Trigger Sample 1 | Kick Drum  |
+| Button 2 | GPIO7 | Trigger Sample 2 | Snare Drum |
+| Button 3 | GPIO8 | Trigger Sample 3 | Hi-hat     |
+| Button 4 | GPIO9 | Trigger Sample 4 | Tom        |
+
+_Hardware buttons work in both sine wave and sample modes_
 
 ## 🚀 Getting Started
 
@@ -114,10 +131,9 @@ _Note: Full drum machine controls will be added as development progresses_
 
 ```
 ├── src/
-│   ├── main.cpp              # Mozzi-based sine wave generator
-│   ├── mozzi_config.h        # Mozzi configuration for I2S
-│   ├── mars_audio.h          # Legacy audio data (to be converted)
-│   └── audio_data.h          # Legacy test data
+│   ├── main.cpp              # 4-button drum machine with sample playback
+│   ├── step_sample.h         # Embedded audio sample data
+│   └── main_mozzi.cpp        # Backup reference file
 ├── source/                   # Original drum samples (to be added)
 ├── AI/
 │   └── user_stories.md       # Project roadmap and user stories
@@ -131,10 +147,11 @@ The project uses the [Mozzi](https://github.com/sensorium/Mozzi) audio synthesis
 
 ### **Current Implementation**
 
-- `updateAudio()`: Mozzi audio generation callback (16kHz)
-- `updateControl()`: Mozzi control callback (64Hz) for parameter changes
+- `updateAudio()`: Mozzi audio generation callback (16kHz) for sample playback
+- `updateControl()`: Mozzi control callback (64Hz) for button processing
 - `audioOutput()`: Custom I2S output function for external DAC
-- Sine wave oscillator using Mozzi's optimized wavetables
+- `updateButtons()`: Hardware debouncing and trigger detection
+- `processButtonTriggers()`: Sample triggering logic
 
 ### **Planned Features**
 

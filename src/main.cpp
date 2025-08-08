@@ -15,11 +15,12 @@
 #include <Arduino.h>
 #include <I2S.h>    // For I2S output on RP2040
 #include <Mozzi.h>  // Use Mozzi.h instead of MozziGuts.h for Mozzi 2.0
-#include <Oscil.h>
 #include <Wire.h>
-#include <tables/sin2048_int8.h>
 
-#include "step_sample.h"  // Generated audio sample
+#include "hihat_sample.h"  // Hi-hat sample
+#include "kick_sample.h"   // Kick drum sample
+#include "snare_sample.h"  // Snare drum sample
+#include "tom_sample.h"    // Tom sample
 
 // I2S configuration for custom pins
 #define I2S_BCK_PIN 26   // Bit clock
@@ -37,12 +38,34 @@
 #define SDA_PIN 4  // GPIO4 for I2C SDA
 #define SCL_PIN 5  // GPIO5 for I2C SCL
 
-// Create a sine wave oscillator using Mozzi's built-in sine table
-Oscil<SIN2048_NUM_CELLS, MOZZI_AUDIO_RATE> sineWave(SIN2048_DATA);
+// Button/Trigger input pins (with future eurorack compatibility)
+#define BUTTON_1_PIN 6  // GPIO6 - Sample 1 (Kick)
+#define BUTTON_2_PIN 7  // GPIO7 - Sample 2 (Snare)
+#define BUTTON_3_PIN 8  // GPIO8 - Sample 3 (Hihat)
+#define BUTTON_4_PIN 9  // GPIO9 - Sample 4 (Tom)
 
-// Simple sample player variables
-uint32_t samplePosition = 0;
-bool samplePlaying = false;
+// Debounce settings
+#define DEBOUNCE_DELAY 20    // 20ms debounce delay
+#define TRIGGER_MIN_PULSE 5  // Minimum 5ms pulse for eurorack triggers
+
+// Multi-voice sample player structure
+struct SamplePlayer {
+  const int8_t* data;
+  uint32_t length;
+  uint32_t position;
+  bool playing;
+  const char* name;
+};
+
+// Initialize sample players for each drum
+SamplePlayer samplePlayers[4] = {
+    {kick_sample_data, kick_sample_length, 0, false, "Kick"},
+    {snare_sample_data, snare_sample_length, 0, false, "Snare"},
+    {hihat_sample_data, hihat_sample_length, 0, false, "Hihat"},
+    {tom_sample_data, tom_sample_length, 0, false, "Tom"}};
+
+// Track last triggered sample for display
+int lastTriggeredSample = 0;
 
 // Create OLED display object
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -51,9 +74,29 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 I2S i2s(OUTPUT, I2S_BCK_PIN, I2S_DATA_PIN);
 
 // Control variables
-float frequency = 440.0;  // 440Hz (A4 note)
-enum PlayMode { SINE_WAVE, SAMPLE_PLAYBACK };
-PlayMode currentMode = SINE_WAVE;
+bool oledWorking = false;  // Track if OLED is functional
+
+// Button/Trigger state tracking
+struct ButtonState {
+  int pin;
+  bool lastState;
+  bool currentState;
+  unsigned long lastDebounceTime;
+  bool triggered;
+  const char* name;
+};
+
+// Initialize button states for 4 sample triggers
+ButtonState buttons[4] = {{BUTTON_1_PIN, HIGH, HIGH, 0, false, "Kick"},
+                          {BUTTON_2_PIN, HIGH, HIGH, 0, false, "Snare"},
+                          {BUTTON_3_PIN, HIGH, HIGH, 0, false, "Hihat"},
+                          {BUTTON_4_PIN, HIGH, HIGH, 0, false, "Tom"}};
+
+// Sample playback state (will expand for multi-voice later)
+int currentSampleIndex = 0;  // Which sample to play (0-3)
+
+// Forward declarations
+void updateDisplay();
 
 // Required audioOutput function for Mozzi 2.0 external audio mode
 void audioOutput(const AudioOutput f) {
@@ -63,6 +106,63 @@ void audioOutput(const AudioOutput f) {
 
   // Write stereo samples (same sample for both channels)
   i2s.write16(sample, sample);
+}
+
+// Button debouncing and trigger detection
+void updateButtons() {
+  for (int i = 0; i < 4; i++) {
+    int reading = digitalRead(buttons[i].pin);
+
+    // Check if button state changed (for debouncing)
+    if (reading != buttons[i].lastState) {
+      buttons[i].lastDebounceTime = millis();
+    }
+
+    // If enough time has passed since last state change
+    if ((millis() - buttons[i].lastDebounceTime) > DEBOUNCE_DELAY) {
+      // If the button state has actually changed
+      if (reading != buttons[i].currentState) {
+        buttons[i].currentState = reading;
+
+        // Trigger on falling edge (button press) - active LOW with pullup
+        if (buttons[i].currentState == LOW) {
+          buttons[i].triggered = true;
+          Serial.print("Button ");
+          Serial.print(i + 1);
+          Serial.print(" (");
+          Serial.print(buttons[i].name);
+          Serial.println(") triggered!");
+        }
+      }
+    }
+
+    buttons[i].lastState = reading;
+  }
+}
+
+// Process button triggers and start sample playback
+void processButtonTriggers() {
+  for (int i = 0; i < 4; i++) {
+    if (buttons[i].triggered) {
+      buttons[i].triggered = false;  // Clear trigger flag
+
+      // Trigger the corresponding sample
+      samplePlayers[i].position = 0;
+      samplePlayers[i].playing = true;
+      lastTriggeredSample = i;
+
+      Serial.print("Playing ");
+      Serial.print(samplePlayers[i].name);
+      Serial.print(" (Button ");
+      Serial.print(i + 1);
+      Serial.println(")");
+
+      // Update display if OLED is working
+      if (oledWorking) {
+        updateDisplay();
+      }
+    }
+  }
 }
 
 // Display functions
@@ -75,25 +175,28 @@ void updateDisplay() {
   // Title
   display.println("Pico DAC Sampler");
 
-  // Current mode
-  display.print("Mode: ");
-  if (currentMode == SINE_WAVE) {
-    display.println("Sine Wave");
-    display.print("Freq: ");
-    display.print((int)frequency);
-    display.println(" Hz");
-  } else {
-    display.println("Sample");
-    if (samplePlaying) {
-      display.println("Playing...");
-      // Show progress bar
-      int progress = (samplePosition * 100) / step_sample_length;
-      display.print("Progress: ");
-      display.print(progress);
-      display.println("%");
-    } else {
-      display.println("Press SPACE");
+  // Show playing samples
+  bool anyPlaying = false;
+  for (int i = 0; i < 4; i++) {
+    if (samplePlayers[i].playing) {
+      anyPlaying = true;
+      break;
     }
+  }
+
+  if (anyPlaying) {
+    display.println("Playing:");
+    for (int i = 0; i < 4; i++) {
+      if (samplePlayers[i].playing) {
+        display.print(samplePlayers[i].name);
+        display.print(" ");
+      }
+    }
+    display.println();
+  } else {
+    display.println("Ready");
+    display.print("Last: ");
+    display.println(samplePlayers[lastTriggeredSample].name);
   }
 
   display.display();
@@ -104,6 +207,17 @@ void setup() {
   delay(500);
 
   Serial.println("Pico DAC Sampler Starting...");
+
+  // Initialize button pins with internal pull-up resistors
+  for (int i = 0; i < 4; i++) {
+    pinMode(buttons[i].pin, INPUT_PULLUP);
+    Serial.print("Initialized button ");
+    Serial.print(i + 1);
+    Serial.print(" (");
+    Serial.print(buttons[i].name);
+    Serial.print(") on GPIO");
+    Serial.println(buttons[i].pin);
+  }
 
   // Initialize I2C for OLED
   Wire.setSDA(SDA_PIN);
@@ -138,17 +252,15 @@ void setup() {
   // Initialize Mozzi (will use external audio output via audioOutput function)
   startMozzi();
 
-  // Set the frequency of the sine wave
-  sineWave.setFreq(frequency);
-
-  Serial.println("Pico DAC Sampler initialized - Mozzi with sample playback!");
+  Serial.println("Pico DAC Sampler initialized - 4-button drum machine!");
   Serial.println("Commands:");
-  Serial.println("  s: Switch to sine wave mode");
-  Serial.println("  m: Switch to sample playback mode");
-  Serial.println("  SPACE: Trigger sample (in sample mode)");
-  Serial.println("  1-9: Change sine wave frequency (100Hz to 900Hz)");
-  Serial.println("  0: Reset to 440Hz");
-  Serial.println("Starting in sine wave mode...");
+  Serial.println("  SPACE: Trigger sample via serial");
+  Serial.println("Hardware Buttons:");
+  Serial.println("  Button 1 (GPIO6): Kick sample");
+  Serial.println("  Button 2 (GPIO7): Snare sample");
+  Serial.println("  Button 3 (GPIO8): Hihat sample");
+  Serial.println("  Button 4 (GPIO9): Tom sample");
+  Serial.println("Ready for button triggers...");
 
   // Update display with initial state
   updateDisplay();
@@ -158,72 +270,25 @@ void updateControl() {
   // This function is called at CONTROL_RATE (64Hz)
   // Handle any control changes here
 
+  // Process button inputs with debouncing
+  updateButtons();
+  processButtonTriggers();
+
   // Check for serial input
   if (Serial.available()) {
     char input = Serial.read();
 
     switch (input) {
-      case 's':
-      case 'S':
-        currentMode = SINE_WAVE;
-        Serial.println("Switched to sine wave mode");
+      case ' ':  // Spacebar to trigger last sample
+        samplePlayers[lastTriggeredSample].position = 0;
+        samplePlayers[lastTriggeredSample].playing = true;
+        Serial.print("Sample triggered via spacebar: ");
+        Serial.println(samplePlayers[lastTriggeredSample].name);
         updateDisplay();
         break;
-      case 'm':
-      case 'M':
-        currentMode = SAMPLE_PLAYBACK;
-        Serial.println("Switched to sample playback mode");
-        updateDisplay();
-        break;
-      case ' ':  // Spacebar to trigger sample
-        if (currentMode == SAMPLE_PLAYBACK) {
-          samplePosition = 0;
-          samplePlaying = true;
-          Serial.println("Sample triggered!");
-          updateDisplay();
-        }
-        break;
-      case '1':
-        frequency = 100;
-        break;
-      case '2':
-        frequency = 200;
-        break;
-      case '3':
-        frequency = 300;
-        break;
-      case '4':
-        frequency = 400;
-        break;
-      case '5':
-        frequency = 500;
-        break;
-      case '6':
-        frequency = 600;
-        break;
-      case '7':
-        frequency = 700;
-        break;
-      case '8':
-        frequency = 800;
-        break;
-      case '9':
-        frequency = 900;
-        break;
-      case '0':
-        frequency = 440;
-        break;  // Reset to A4
       default:
-        return;  // Invalid input, don't change frequency
-    }
-
-    // Update the oscillator frequency if in sine wave mode
-    if (currentMode == SINE_WAVE) {
-      sineWave.setFreq(frequency);
-      Serial.print("Frequency changed to: ");
-      Serial.print(frequency);
-      Serial.println(" Hz");
-      updateDisplay();
+        // Ignore other input
+        break;
     }
   }
 }
@@ -232,23 +297,27 @@ AudioOutput updateAudio() {
   // This function is called at AUDIO_RATE (16384Hz)
   // Return the next audio sample as AudioOutput
 
-  int8_t sample = 0;
+  int16_t mixedSample = 0;  // Use 16-bit for mixing to prevent overflow
 
-  if (currentMode == SINE_WAVE) {
-    // Generate sine wave
-    sample = sineWave.next();
-  } else if (currentMode == SAMPLE_PLAYBACK) {
-    // Simple sample playback
-    if (samplePlaying && samplePosition < step_sample_length) {
-      sample = pgm_read_byte(&step_sample_data[samplePosition]);
-      samplePosition++;
-    } else {
-      sample = 0;             // Silence when not playing
-      samplePlaying = false;  // Stop playback when finished
+  // Mix all playing samples
+  for (int i = 0; i < 4; i++) {
+    if (samplePlayers[i].playing &&
+        samplePlayers[i].position < samplePlayers[i].length) {
+      // Read sample from PROGMEM and add to mix
+      int8_t sample =
+          pgm_read_byte(&samplePlayers[i].data[samplePlayers[i].position]);
+      mixedSample += sample;
+      samplePlayers[i].position++;
+    } else if (samplePlayers[i].playing) {
+      // Sample finished playing
+      samplePlayers[i].playing = false;
     }
   }
 
-  return MonoOutput::from8Bit(sample);
+  // Clamp mixed sample to 8-bit range and convert
+  mixedSample = max(-128, min(127, mixedSample));
+
+  return MonoOutput::from8Bit((int8_t)mixedSample);
 }
 
 void loop() {
@@ -258,8 +327,16 @@ void loop() {
   // Update display periodically to show sample progress
   static unsigned long lastDisplayUpdate = 0;
   if (millis() - lastDisplayUpdate > 100) {  // Every 100ms
-    if (currentMode == SAMPLE_PLAYBACK && samplePlaying) {
-      updateDisplay();  // Update progress bar
+    // Check if any samples are playing
+    bool anyPlaying = false;
+    for (int i = 0; i < 4; i++) {
+      if (samplePlayers[i].playing) {
+        anyPlaying = true;
+        break;
+      }
+    }
+    if (anyPlaying) {
+      updateDisplay();  // Update display when samples are playing
     }
     lastDisplayUpdate = millis();
   }
@@ -267,14 +344,7 @@ void loop() {
   // Optional: Print status occasionally
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint > 5000) {  // Every 5 seconds
-    Serial.print("Playing ");
-    if (currentMode == SINE_WAVE) {
-      Serial.print("sine wave at ");
-      Serial.print(frequency);
-      Serial.println(" Hz");
-    } else {
-      Serial.println("sample mode");
-    }
+    Serial.println("Pico DAC Sampler - Ready for button triggers");
     lastPrint = millis();
   }
 }
